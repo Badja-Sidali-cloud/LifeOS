@@ -112,7 +112,7 @@ export class StorageService {
       // Insert remaining data (blocks, modules, habits already seeded above in migrations)
       await Promise.all([
         db.scheduleVersions.add(baseVersion),
-        db.settings.add({
+        db.settings.put({
           userId: 'default-user',
           theme: 'dark',
           fajrTime: null,
