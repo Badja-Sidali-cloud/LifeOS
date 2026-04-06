@@ -1,0 +1,47 @@
+{
+  "name": "LifeOS — Personal Operating System",
+  "short_name": "LifeOS",
+  "description": "Your daily accountability system — schedule, habits, study, gym, Quran.",
+  "start_url": "/dashboard",
+  "display": "standalone",
+  "background_color": "#09090b",
+  "theme_color": "#09090b",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/apple-icon.png",
+      "sizes": "180x180",
+      "type": "image/png",
+      "purpose": "apple touch icon"
+    },
+    {
+      "src": "/icon-dark-32x32.png",
+      "sizes": "32x32",
+      "type": "image/png"
+    }
+  ],
+  "categories": ["productivity", "education", "health"],
+  "shortcuts": [
+    {
+      "name": "Today",
+      "url": "/today",
+      "description": "See today's schedule"
+    },
+    {
+      "name": "Focus",
+      "url": "/focus",
+      "description": "Start a focus session"
+    },
+    {
+      "name": "Habits",
+      "url": "/habits",
+      "description": "Check in habits"
+    }
+  ]
+}
