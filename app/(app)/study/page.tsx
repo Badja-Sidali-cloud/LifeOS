@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useLifeOsStore } from '@/store/store';
 import { getWeekStart, getWeekEnd, isSameDay } from '@/lib/utils-schedule';
 import { Card } from '@/components/ui/card';
@@ -8,194 +8,227 @@ import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { BookOpen, X, Timer, CheckCircle2 } from 'lucide-react';
+import { BookOpen, X, Timer, CheckCircle2, TrendingUp, Flame } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 
+const EXAM_DATE = new Date('2026-05-10');
+
 export default function StudyPage() {
-  const modules = useLifeOsStore((state) => state.modules);
-  const selectedDate = useLifeOsStore((state) => state.selectedDate);
-  const sessions = useLifeOsStore((state) => state.sessions);
-  const logSession = useLifeOsStore((state) => state.logSession);
-  const isLoading = useLifeOsStore((state) => state.isLoading);
-  const router = useRouter();
+  const modules      = useLifeOsStore((s) => s.modules);
+  const selectedDate = useLifeOsStore((s) => s.selectedDate);
+  const sessions     = useLifeOsStore((s) => s.sessions);
+  const logSession   = useLifeOsStore((s) => s.logSession);
+  const isLoading    = useLifeOsStore((s) => s.isLoading);
+  const router       = useRouter();
 
   const [selectedModule, setSelectedModule] = useState<string | null>(null);
-  const [logDuration, setLogDuration] = useState<string>('');
-  const [logNotes, setLogNotes] = useState<string>('');
-  const [isLoggingSession, setIsLoggingSession] = useState(false);
+  const [logDuration, setLogDuration]       = useState('');
+  const [logNotes, setLogNotes]             = useState('');
+  const [isLogging, setIsLogging]           = useState(false);
 
   const weekStart = getWeekStart(selectedDate);
-  const weekEnd = getWeekEnd(selectedDate);
+  const weekEnd   = getWeekEnd(selectedDate);
 
-  const getModuleHours = (moduleCode: string) =>
-    sessions
-      .filter((s) => s.module === moduleCode && s.date >= weekStart && s.date <= weekEnd)
-      .reduce((sum, s) => sum + s.durationMinutes, 0) / 60;
+  // Days until exams
+  const daysLeft = useMemo(() => {
+    const today = new Date(); today.setHours(0,0,0,0);
+    const exam  = new Date(EXAM_DATE); exam.setHours(0,0,0,0);
+    return Math.max(0, Math.ceil((exam.getTime() - today.getTime()) / 86400000));
+  }, []);
 
-  const getTodayMinutes = (moduleCode: string) =>
-    sessions
-      .filter((s) => s.module === moduleCode && isSameDay(s.date, selectedDate))
-      .reduce((sum, s) => sum + s.durationMinutes, 0);
+  // Per-module stats
+  const moduleStats = useMemo(() =>
+    [...modules]
+      .filter(m => m.code !== 'TIC')
+      .map(m => {
+        const weekHours = sessions
+          .filter(s => s.module === m.code && s.date >= weekStart && s.date <= weekEnd)
+          .reduce((sum, s) => sum + s.durationMinutes, 0) / 60;
+        const todayMins = sessions
+          .filter(s => s.module === m.code && isSameDay(s.date, selectedDate))
+          .reduce((sum, s) => sum + s.durationMinutes, 0);
+        const pct = Math.min((weekHours / (m.targetHoursPerWeek || 1)) * 100, 100);
+        const gap = Math.max(0, (m.targetHoursPerWeek || 0) - weekHours);
+        return { ...m, weekHours, todayMins, pct, gap };
+      })
+      .sort((a, b) => a.pct - b.pct || b.priorityScore - a.priorityScore),
+  [modules, sessions, weekStart, weekEnd, selectedDate]);
 
-  const handleLogSession = async () => {
-    if (!selectedModule || !logDuration) return;
-    setIsLoggingSession(true);
-    try {
-      await logSession({
-        type: 'module_study',
-        module: selectedModule,
-        durationMinutes: parseInt(logDuration),
-        date: selectedDate,
-        deepWork: true,
-        distractionCount: 0,
-        notesText: logNotes,
-      });
-      setLogDuration('');
-      setLogNotes('');
-      setSelectedModule(null);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setIsLoggingSession(false);
-    }
-  };
+  // #1 suggestion = first in sorted list (lowest % done, highest priority)
+  const topSuggestion = moduleStats[0];
 
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center h-full">
-        <p className="text-muted-foreground">Loading modules...</p>
-      </div>
-    );
-  }
-
-  const totalStudyMinsToday = sessions
-    .filter((s) => isSameDay(s.date, selectedDate) && s.type === 'module_study')
+  const totalStudyToday = sessions
+    .filter(s => isSameDay(s.date, selectedDate) && s.type === 'module_study')
     .reduce((sum, s) => sum + s.durationMinutes, 0);
 
+  const handleLog = async () => {
+    if (!selectedModule || !logDuration) return;
+    setIsLogging(true);
+    try {
+      await logSession({
+        type: 'module_study', module: selectedModule,
+        durationMinutes: parseInt(logDuration),
+        date: selectedDate, deepWork: true,
+        distractionCount: 0, notesText: logNotes,
+      });
+      setLogDuration(''); setLogNotes(''); setSelectedModule(null);
+    } finally { setIsLogging(false); }
+  };
+
+  if (isLoading) return (
+    <div className="flex items-center justify-center h-full">
+      <p className="text-muted-foreground">Loading...</p>
+    </div>
+  );
+
   return (
-    <div className="p-4 md:p-6 max-w-3xl">
-      <div className="mb-6 flex items-start justify-between">
+    <div className="p-4 md:p-6 max-w-2xl">
+
+      {/* Header */}
+      <div className="flex items-start justify-between mb-5">
         <div>
-          <h1 className="text-4xl font-bold text-foreground mb-2">Study Modules</h1>
-          <p className="text-muted-foreground">
-            {totalStudyMinsToday > 0
-              ? `${(totalStudyMinsToday / 60).toFixed(1)}h logged today`
-              : 'No sessions logged today yet'}
+          <h1 className="text-2xl font-bold text-foreground">Study</h1>
+          <p className="text-sm text-muted-foreground">
+            {totalStudyToday > 0
+              ? `${(totalStudyToday / 60).toFixed(1)}h logged today`
+              : 'Nothing logged today yet'}
           </p>
         </div>
-        <Button className="gap-2 shrink-0" onClick={() => router.push('/focus')}>
-          <Timer className="w-4 h-4" />
-          Start Focus Timer
+        <Button size="sm" variant="outline" onClick={() => router.push('/focus')}>
+          <Timer className="w-4 h-4 mr-1" /> Focus Timer
         </Button>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {[...modules]
-          .sort((a, b) => b.priorityScore - a.priorityScore)
-          .map((module) => {
-            const hoursThisWeek = getModuleHours(module.code);
-            const todayMinutes = getTodayMinutes(module.code);
-            const progressPercent = Math.min((hoursThisWeek / (module.targetHoursPerWeek || 1)) * 100, 100);
-            const isSelected = selectedModule === module.code;
+      {/* Smart suggestion banner */}
+      {topSuggestion && (
+        <Card className="p-4 mb-5 border-accent/40 bg-accent/5">
+          <div className="flex items-center gap-2 mb-1">
+            <Flame className="w-4 h-4 text-accent" />
+            <p className="text-xs font-semibold text-accent uppercase tracking-wide">Study this now</p>
+            {daysLeft > 0 && (
+              <span className="ml-auto text-xs text-muted-foreground">{daysLeft}d to exams</span>
+            )}
+          </div>
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-xl font-bold text-foreground">{topSuggestion.code}</p>
+              <p className="text-xs text-muted-foreground">{topSuggestion.name}</p>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                {topSuggestion.weekHours.toFixed(1)}h done · {topSuggestion.gap.toFixed(1)}h remaining this week
+              </p>
+            </div>
+            <Button
+              size="sm"
+              onClick={() => setSelectedModule(
+                selectedModule === topSuggestion.code ? null : topSuggestion.code
+              )}
+              className="shrink-0"
+            >
+              <BookOpen className="w-4 h-4 mr-1" />
+              Log Session
+            </Button>
+          </div>
 
-            let priorityLabel = 'LOW';
-            let priorityColor = 'bg-gray-900/30 text-gray-400';
-            if (module.priorityScore >= 150) { priorityLabel = 'CRITICAL'; priorityColor = 'bg-destructive/30 text-destructive'; }
-            else if (module.priorityScore >= 60) { priorityLabel = 'HIGH'; priorityColor = 'bg-yellow-900/30 text-yellow-400'; }
-            else if (module.priorityScore >= 30) { priorityLabel = 'MEDIUM'; priorityColor = 'bg-green-900/30 text-green-400'; }
+          {/* Inline log form for suggestion */}
+          {selectedModule === topSuggestion.code && (
+            <div className="mt-3 space-y-2 pt-3 border-t border-accent/20">
+              <div className="flex gap-2">
+                <Input
+                  type="number" placeholder="Minutes studied"
+                  value={logDuration} onChange={e => setLogDuration(e.target.value)}
+                  className="flex-1" autoFocus
+                />
+                <Button onClick={handleLog} disabled={!logDuration || isLogging} size="sm">
+                  {isLogging ? '...' : 'Save'}
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => setSelectedModule(null)}>
+                  <X className="w-4 h-4" />
+                </Button>
+              </div>
+              <Input
+                placeholder="Notes (optional)"
+                value={logNotes} onChange={e => setLogNotes(e.target.value)}
+              />
+            </div>
+          )}
+        </Card>
+      )}
 
-            return (
-              <Card key={module.id} className={`p-5 transition-all ${isSelected ? 'ring-2 ring-accent border-accent' : ''}`}>
-                {/* Header */}
-                <div className="flex items-start justify-between mb-2">
-                  <div>
-                    <h3 className="font-bold text-lg text-foreground">{module.code}</h3>
-                    <p className="text-xs text-muted-foreground">{module.name}</p>
-                  </div>
-                  <span className={`text-xs px-2 py-1 rounded font-semibold ${priorityColor}`}>
-                    {priorityLabel}
-                  </span>
-                </div>
+      {/* All modules */}
+      <div className="space-y-2">
+        {moduleStats.map((m, idx) => {
+          const isSelected = selectedModule === m.code && m.code !== topSuggestion?.code;
+          const barColor = m.pct >= 80 ? 'bg-green-500' : m.pct >= 40 ? 'bg-yellow-500' : 'bg-red-500';
 
-                {/* Today badge */}
-                {todayMinutes > 0 && (
-                  <div className="flex items-center gap-1 mb-2">
-                    <CheckCircle2 className="w-3 h-3 text-green-400" />
-                    <span className="text-xs text-green-400 font-medium">{todayMinutes}m logged today</span>
-                  </div>
-                )}
+          return (
+            <div
+              key={m.id}
+              className={`rounded-xl border p-3 transition-all
+                ${isSelected ? 'border-accent bg-accent/5' : 'border-border bg-card'}
+                ${idx === 0 ? 'opacity-60' : ''}`}
+            >
+              <div className="flex items-center gap-3">
+                {/* Rank */}
+                <span className="text-xs font-bold text-muted-foreground w-5 shrink-0 text-center">
+                  {idx === 0 ? '🔥' : `#${idx + 1}`}
+                </span>
 
-                {/* Stats */}
-                <div className="grid grid-cols-3 gap-2 text-xs mb-3">
-                  <div className="bg-secondary/50 rounded p-2">
-                    <p className="text-muted-foreground">Coeff</p>
-                    <p className="font-bold text-foreground">{module.coefficient}</p>
-                  </div>
-                  <div className="bg-secondary/50 rounded p-2">
-                    <p className="text-muted-foreground">Weakness</p>
-                    <p className="font-bold text-foreground">{module.weakness}%</p>
-                  </div>
-                  <div className="bg-secondary/50 rounded p-2">
-                    <p className="text-muted-foreground">Priority</p>
-                    <p className="font-bold text-foreground">{module.priorityScore}</p>
-                  </div>
-                </div>
-
-                {/* Weekly progress */}
-                <div className="mb-4">
+                <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between mb-1">
-                    <span className="text-xs text-muted-foreground">This week</span>
-                    <span className="text-xs font-medium text-foreground">
-                      {hoursThisWeek.toFixed(1)}h / {module.targetHoursPerWeek}h
+                    <div className="flex items-center gap-2">
+                      <span className="font-bold text-sm text-foreground">{m.code}</span>
+                      {m.todayMins > 0 && (
+                        <span className="text-[10px] text-green-400 font-semibold flex items-center gap-0.5">
+                          <CheckCircle2 className="w-3 h-3" />{m.todayMins}m today
+                        </span>
+                      )}
+                    </div>
+                    <span className="text-xs text-muted-foreground shrink-0">
+                      {m.weekHours.toFixed(1)}h / {m.targetHoursPerWeek}h
                     </span>
                   </div>
-                  <Progress value={progressPercent} className="h-1.5" />
+                  <div className="h-1.5 bg-secondary rounded-full overflow-hidden">
+                    <div className={`h-full rounded-full ${barColor} transition-all`} style={{ width: `${m.pct}%` }} />
+                  </div>
                 </div>
 
-                {/* Action */}
+                {/* Log button */}
                 {!isSelected ? (
-                  <div className="flex gap-2">
-                    <Button className="flex-1" variant="outline" onClick={() => setSelectedModule(module.code)}>
-                      <BookOpen className="w-4 h-4 mr-2" />
-                      Log Session
-                    </Button>
-                    <Button variant="outline" size="icon" onClick={() => router.push('/focus')} title="Open focus timer">
-                      <Timer className="w-4 h-4" />
-                    </Button>
-                  </div>
+                  <button
+                    onClick={() => setSelectedModule(m.code)}
+                    className="shrink-0 text-xs text-muted-foreground hover:text-accent transition-colors px-2 py-1 rounded border border-border hover:border-accent"
+                  >
+                    Log
+                  </button>
                 ) : (
-                  <div className="space-y-3 p-4 bg-secondary/50 rounded-md border border-secondary">
-                    <div>
-                      <Label className="text-xs">Duration (minutes)</Label>
-                      <Input
-                        type="number" placeholder="45"
-                        value={logDuration}
-                        onChange={(e) => setLogDuration(e.target.value)}
-                        className="mt-1" autoFocus
-                      />
-                    </div>
-                    <div>
-                      <Label className="text-xs">Notes (optional)</Label>
-                      <Input
-                        placeholder="What did you study?"
-                        value={logNotes}
-                        onChange={(e) => setLogNotes(e.target.value)}
-                        className="mt-1"
-                      />
-                    </div>
-                    <div className="flex gap-2">
-                      <Button size="sm" className="flex-1" onClick={handleLogSession} disabled={!logDuration || isLoggingSession}>
-                        {isLoggingSession ? 'Saving...' : 'Save Session'}
-                      </Button>
-                      <Button size="sm" variant="ghost" onClick={() => setSelectedModule(null)}>
-                        <X className="w-4 h-4" />
-                      </Button>
-                    </div>
-                  </div>
+                  <button onClick={() => setSelectedModule(null)} className="shrink-0 text-muted-foreground p-1">
+                    <X className="w-4 h-4" />
+                  </button>
                 )}
-              </Card>
-            );
-          })}
+              </div>
+
+              {/* Inline log form */}
+              {isSelected && (
+                <div className="mt-3 space-y-2 pt-3 border-t border-border">
+                  <div className="flex gap-2">
+                    <Input
+                      type="number" placeholder="Minutes"
+                      value={logDuration} onChange={e => setLogDuration(e.target.value)}
+                      className="flex-1" autoFocus
+                    />
+                    <Button onClick={handleLog} disabled={!logDuration || isLogging} size="sm">
+                      {isLogging ? '...' : 'Save'}
+                    </Button>
+                  </div>
+                  <Input
+                    placeholder="Notes (optional)"
+                    value={logNotes} onChange={e => setLogNotes(e.target.value)}
+                  />
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
     </div>
   );

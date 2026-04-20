@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useLifeOsStore } from '@/store/store';
+import { startAlarmWatcher, rescheduleAll, pingServiceWorker } from '@/lib/alarms';
 
 export function AppInitializer({ children }: { children: React.ReactNode }) {
   const [isInitialized, setIsInitialized] = useState(false);
@@ -20,6 +21,14 @@ export function AppInitializer({ children }: { children: React.ReactNode }) {
 
     initializeApp();
   }, [hydrate]);
+
+  // Start alarm watcher once app is initialized
+  useEffect(() => {
+    if (!isInitialized) return;
+    rescheduleAll().catch(() => {});
+    startAlarmWatcher();
+    pingServiceWorker();
+  }, [isInitialized]);
 
   if (!isInitialized) {
     return (

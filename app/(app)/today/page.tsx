@@ -63,6 +63,40 @@ export default function TodayPage() {
   const nowMins    = isToday ? now.getHours() * 60 + now.getMinutes() : -1;
   const sections   = groupBlocksBySection(todayBlocks);
 
+  // ── Exam countdown ───────────────────────────────────────────────────────
+  const EXAM_DATE = new Date('2026-05-10');
+  const daysToExam = useMemo(() => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const exam  = new Date(EXAM_DATE);
+    exam.setHours(0, 0, 0, 0);
+    return Math.ceil((exam.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+  }, [now]);
+
+  // ── Smart study suggestion ───────────────────────────────────────────────
+  // Find the module you've studied the least this week relative to its target
+  const studySuggestion = useMemo(() => {
+    const weekStart = new Date(selectedDate);
+    weekStart.setDate(weekStart.getDate() - ((weekStart.getDay() + 6) % 7));
+    weekStart.setHours(0, 0, 0, 0);
+    const weekEnd = new Date(weekStart);
+    weekEnd.setDate(weekEnd.getDate() + 7);
+
+    const scored = modules
+      .filter(m => m.code !== 'TIC') // TIC is online, skip
+      .map(m => {
+        const done = sessions
+          .filter(s => s.module === m.code && s.date >= weekStart && s.date < weekEnd)
+          .reduce((sum, s) => sum + s.durationMinutes, 0) / 60;
+        const pct = done / (m.targetHoursPerWeek || 1);
+        return { code: m.code, name: m.name, pct, done, target: m.targetHoursPerWeek, priorityScore: m.priorityScore };
+      })
+      // Sort by: lowest % done, then by highest priority
+      .sort((a, b) => a.pct - b.pct || b.priorityScore - a.priorityScore);
+
+    return scored[0] || null;
+  }, [modules, sessions, selectedDate]);
+
   function isCurrentBlock(b: ScheduleBlock) {
     if (!isToday || b.timeKind !== 'fixed' || !b.startTime || !b.endTime) return false;
     return nowMins >= timeStringToMinutes(b.startTime) && nowMins < timeStringToMinutes(b.endTime);
@@ -130,6 +164,34 @@ export default function TodayPage() {
           <ChevronRight className="w-5 h-5 text-muted-foreground" />
         </button>
       </div>
+
+      {/* ── Exam countdown ── */}
+      {isToday && daysToExam > 0 && (
+        <div className={`mb-4 px-4 py-3 rounded-xl flex items-center justify-between
+          ${daysToExam <= 7 ? 'bg-red-500/10 border border-red-500/30' :
+            daysToExam <= 14 ? 'bg-orange-500/10 border border-orange-500/30' :
+            'bg-secondary border border-border'}`}>
+          <div>
+            <p className={`text-xs font-semibold uppercase tracking-wide
+              ${daysToExam <= 7 ? 'text-red-400' : daysToExam <= 14 ? 'text-orange-400' : 'text-muted-foreground'}`}>
+              Exams start May 10
+            </p>
+            <p className={`text-2xl font-bold
+              ${daysToExam <= 7 ? 'text-red-400' : daysToExam <= 14 ? 'text-orange-400' : 'text-foreground'}`}>
+              {daysToExam} days left
+            </p>
+          </div>
+          {studySuggestion && (
+            <div className="text-right">
+              <p className="text-xs text-muted-foreground mb-0.5">Study now</p>
+              <p className="text-sm font-bold text-accent">{studySuggestion.code}</p>
+              <p className="text-xs text-muted-foreground">
+                {studySuggestion.done.toFixed(1)}h / {studySuggestion.target}h this week
+              </p>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ── Habit quick-log ── */}
       {(quranHabit || webdevHabit) && (

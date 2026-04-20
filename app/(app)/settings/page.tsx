@@ -7,8 +7,12 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useTheme } from 'next-themes';
-import { Check, Edit2, X, Plus } from 'lucide-react';
+import { Check, Edit2, X, Plus, Bell, BellOff } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
+import {
+  Alarm, getAlarms, saveAlarm, deleteAlarm,
+  toggleAlarm, requestPermission, DEFAULT_ALARMS, nextFireTime,
+} from '@/lib/alarms';
 import {
   Select,
   SelectContent,
@@ -58,6 +62,63 @@ export default function SettingsPage() {
   const [newEnd, setNewEnd] = useState('09:00');
   const [newCategory, setNewCategory] = useState<typeof CATEGORIES[number]>('study');
   const [isAddingBlock, setIsAddingBlock] = useState(false);
+
+  // ── Alarm state ──────────────────────────────────────────────────────────
+  const [alarms, setAlarms]             = useState<Alarm[]>([]);
+  const [notifPermission, setNotifPermission] = useState<string>('default');
+  const [showAddAlarm, setShowAddAlarm] = useState(false);
+  const [newAlarmTitle, setNewAlarmTitle] = useState('');
+  const [newAlarmBody, setNewAlarmBody]   = useState('');
+  const [newAlarmTime, setNewAlarmTime]   = useState('08:00');
+  const [newAlarmDays, setNewAlarmDays]   = useState<number[]>([]);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      setNotifPermission(Notification?.permission ?? 'default');
+      getAlarms().then(setAlarms).catch(() => {});
+    }
+  }, []);
+
+  const handleRequestPermission = async () => {
+    const granted = await requestPermission();
+    setNotifPermission(granted ? 'granted' : 'denied');
+  };
+
+  const handleToggleAlarm = async (id: string, enabled: boolean) => {
+    await toggleAlarm(id, enabled);
+    setAlarms(await getAlarms());
+  };
+
+  const handleDeleteAlarm = async (id: string) => {
+    await deleteAlarm(id);
+    setAlarms(await getAlarms());
+  };
+
+  const handleSeedDefaultAlarms = async () => {
+    for (const alarm of DEFAULT_ALARMS) {
+      await saveAlarm({ ...alarm, fireAt: nextFireTime(alarm), fired: false });
+    }
+    setAlarms(await getAlarms());
+  };
+
+  const handleAddAlarm = async () => {
+    if (!newAlarmTitle || !newAlarmTime) return;
+    const alarm: Alarm = {
+      id: uuidv4(),
+      title: newAlarmTitle,
+      body: newAlarmBody,
+      timeHH: newAlarmTime,
+      days: newAlarmDays,
+      enabled: true,
+      url: '/today',
+    };
+    await saveAlarm(alarm);
+    setAlarms(await getAlarms());
+    setNewAlarmTitle(''); setNewAlarmBody(''); setNewAlarmTime('08:00');
+    setNewAlarmDays([]); setShowAddAlarm(false);
+  };
+
+  const DAYS_SHORT = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
   useEffect(() => {
     const saved = localStorage.getItem('lifeos_username');
@@ -393,6 +454,123 @@ export default function SettingsPage() {
             );
           })}
         </div>
+      </Card>
+
+      {/* ── Alarms & Notifications ── */}
+      <Card className="p-6">
+        <div className="flex items-center justify-between mb-1">
+          <h3 className="font-bold text-foreground">Alarms & Notifications</h3>
+          {notifPermission === 'granted'
+            ? <span className="text-xs text-green-400 flex items-center gap-1"><Bell className="w-3 h-3" />Enabled</span>
+            : <span className="text-xs text-muted-foreground flex items-center gap-1"><BellOff className="w-3 h-3" />Off</span>}
+        </div>
+        <p className="text-sm text-muted-foreground mb-4">
+          Get notified before key moments — leaving home, evening study, weekends.
+        </p>
+
+        {/* Permission */}
+        {notifPermission !== 'granted' && (
+          <div className="mb-4 p-3 rounded-lg bg-accent/10 border border-accent/30">
+            <p className="text-sm font-medium text-foreground mb-2">
+              {notifPermission === 'denied'
+                ? '⚠️ Notifications blocked — enable in Android settings'
+                : '🔔 Allow notifications to use alarms'}
+            </p>
+            {notifPermission !== 'denied' && (
+              <Button size="sm" onClick={handleRequestPermission}>
+                Allow Notifications
+              </Button>
+            )}
+          </div>
+        )}
+
+        {/* Load defaults button */}
+        {alarms.length === 0 && notifPermission === 'granted' && (
+          <Button variant="outline" size="sm" className="mb-4" onClick={handleSeedDefaultAlarms}>
+            Load suggested alarms for your schedule
+          </Button>
+        )}
+
+        {/* Alarm list */}
+        {alarms.length > 0 && (
+          <div className="space-y-2 mb-4">
+            {alarms.map(alarm => (
+              <div key={alarm.id} className="flex items-center gap-3 p-3 rounded-lg border border-border">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-semibold text-foreground">{alarm.timeHH}</span>
+                    <span className="text-sm text-foreground truncate">{alarm.title}</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {alarm.days.length === 0
+                      ? 'Every day'
+                      : alarm.days.map(d => DAYS_SHORT[d]).join(', ')}
+                    {alarm.body ? ` · ${alarm.body}` : ''}
+                  </p>
+                </div>
+                {/* Toggle */}
+                <button
+                  onClick={() => handleToggleAlarm(alarm.id, !alarm.enabled)}
+                  className={`w-10 h-6 rounded-full transition-colors shrink-0 ${alarm.enabled ? 'bg-accent' : 'bg-secondary'}`}
+                >
+                  <div className={`w-4 h-4 bg-white rounded-full mx-auto transition-transform ${alarm.enabled ? 'translate-x-2' : '-translate-x-2'}`} />
+                </button>
+                <button onClick={() => handleDeleteAlarm(alarm.id)} className="text-muted-foreground hover:text-destructive p-1 shrink-0">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Add alarm form */}
+        {showAddAlarm ? (
+          <div className="space-y-3 p-3 rounded-lg border border-accent/40 bg-accent/5">
+            <div className="grid grid-cols-2 gap-2">
+              <div className="col-span-2">
+                <Label className="text-xs">Title</Label>
+                <Input className="mt-1 h-8 text-sm" placeholder="e.g., Study time 📚" value={newAlarmTitle} onChange={e => setNewAlarmTitle(e.target.value)} autoFocus />
+              </div>
+              <div className="col-span-2">
+                <Label className="text-xs">Message (optional)</Label>
+                <Input className="mt-1 h-8 text-sm" placeholder="e.g., Start with ALGO2" value={newAlarmBody} onChange={e => setNewAlarmBody(e.target.value)} />
+              </div>
+              <div>
+                <Label className="text-xs">Time</Label>
+                <Input type="time" className="mt-1 h-8 text-sm" value={newAlarmTime} onChange={e => setNewAlarmTime(e.target.value)} />
+              </div>
+            </div>
+            {/* Day picker */}
+            <div>
+              <Label className="text-xs">Days (empty = every day)</Label>
+              <div className="flex gap-1 mt-1 flex-wrap">
+                {DAYS_SHORT.map((d, i) => (
+                  <button
+                    key={d}
+                    onClick={() => setNewAlarmDays(prev =>
+                      prev.includes(i) ? prev.filter(x => x !== i) : [...prev, i]
+                    )}
+                    className={`px-2 py-1 rounded text-xs font-medium transition-colors ${
+                      newAlarmDays.includes(i) ? 'bg-accent text-accent-foreground' : 'bg-secondary text-muted-foreground'
+                    }`}
+                  >{d}</button>
+                ))}
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <Button size="sm" onClick={handleAddAlarm} disabled={!newAlarmTitle || !newAlarmTime}>
+                <Check className="w-3 h-3 mr-1" /> Add
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setShowAddAlarm(false)}>
+                <X className="w-3 h-3" />
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <Button variant="outline" size="sm" onClick={() => setShowAddAlarm(true)}>
+            <Plus className="w-3 h-3 mr-1" /> Add Alarm
+          </Button>
+        )}
       </Card>
 
       {/* ── Data ── */}
